@@ -49,6 +49,7 @@ int main(int argc, char**argv){
 
 	is_background = 0;
 	arguments_cnt = makelist(cmdline, " \t", cmdvector, MAX_CMD_ARG);
+
 	if (strcmp(cmdvector[arguments_cnt - 1], "&") == 0) {
 		is_background = 1;
 	}
@@ -61,18 +62,19 @@ int main(int argc, char**argv){
 		break;
 	}
 
+	if(is_background == 1){
+		cmdvector[arguments_cnt - 1] = '\0';
+	}
 
 	switch(pid=fork()){
 	case 0:
-		if (is_background == 1)
-			argv[arguments_cnt - 1] = ' ';
 		execvp(cmdvector[0], cmdvector);
 		fatal("main()");
 	case -1:
   		fatal("main()");
 	default:
 		if (is_background == 0)
-			waitpid(pid, &status, 0;)
+			waitpid(pid, &status, 0);
 		else
 			sleep(1);
 	}
