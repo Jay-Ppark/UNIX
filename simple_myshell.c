@@ -7,13 +7,18 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
-#define MAX_CMD_ARG 10
+#include <fcntl.h>
+#define MAX_CMD_ARG 20
 #define BUFSIZ 256
 
 const char *prompt = "myshell> ";
 char* cmdvector[MAX_CMD_ARG];
 char  cmdline[BUFSIZ];
 int status;
+int arguments_cnt = 0;
+
+int pipe_arg_cnt;
+char* pipe_arg[MAX_CMD_ARG];
 
 void fatal(char *str){
 	perror(str);
@@ -47,18 +52,81 @@ void change_directory(char* dirN) {
 		printf("cd ERROR!\n");
 	}
 }
+void erase_vac(int cnt) {
+	int j = 0;
+	for(int i=0;i<arguments_cnt;i++){
+		if(cmdvector[i] != "\0"){
+			cmdvector[j] = cmdvector[i];
+			j++;
+		}
+	}
+	arguments_cnt -= cnt;
+}
+void redirect() {
+	int temp = 0;
+	int fd;
+	for(int i=0;i<arguments_cnt;i++) {
+		if(strcmp(cmdvector[i], ">") == 0) {
+			if((fd = open(cmdvector[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0777)) == -1) {
+				fatal("redirection fail");
+				break;
+			}
+			dup2(fd,1);
+			cmdvector[i] = '\0';
+			temp++;
+			close(fd);
+		}
+		else if(strcmp(cmdvector[i], "<") == 0) {
+			if((fd = open(cmdvector[i + 1], O_RDONLY | O_CREAT, 0777)) == -1) {
+				fatal("redirection fail");
+				break;
+			}
+			dup2(fd,0);
+			cmdvector[i]='\0';
+			temp++;
+			close(fd);
+		}
+	}
+
+	erase_vac(temp);
+}
+void do_pipe() {
+	int i = 0;
+	int p[2], pid;
+	pipe_arg_cnt = makelist(cmdline, "|", pipe_arg, MAX_CMD_ARG);
+	for(i=0;i<pipe_arg_cnt-1;i++){
+		if(pipe(p) < 0)
+			fatal("pipe fail");
+		switch(pid = fork()) {
+			case 0:
+				close(p[0]);
+				dup2(p[1], 1);
+				arguments_cnt = makelist(pipe_arg[i], " \t", cmdvector, MAX_CMD_ARG);
+				redirect();
+				execvp(cmdvector[0], cmdvector);
+				fatal("pipe fork fail(child)");
+			case -1:
+				fatal("pipe fork fail");
+			default :
+				close(p[1]);
+				dup2(p[0], 0);
+		}
+	}
+	arguments_cnt = makelist(pipe_arg[0], " \t",cmdvector, MAX_CMD_ARG);
+	redirect();
+	execvp(cmdvector[0], cmdvector);
+	fatal("error");
+}
 void cmd(int argc) {
 	pid_t pid;
 	switch(pid = fork()){
 		case 0:
 			signal(SIGINT, SIG_DFL);
 			signal(SIGQUIT, SIG_DFL);
-			execvp(cmdvector[0], cmdvector);
+			do_pipe();
 			fatal("error child!");
-			exit(1);
 		case -1:
 			fatal("error!");
-			exit(0);
 		default:
 			waitpid(pid, &status, WUNTRACED);
 			if(WIFSIGNALED(status)){
@@ -72,12 +140,10 @@ void cmd_back(int argc) {
 	pid_t pid;
 	switch(pid = fork()) {
 		case 0:
-			execvp(cmdvector[0], cmdvector);
+			do_pipe();
 			fatal("back_child error!");
-			exit(1);
 		case -1: 
 			fatal("background_error!");
-			exit(0);
 		default:
 			sigemptyset(&ss.sa_mask);
 			ss.sa_flags = SA_NOCLDSTOP;
@@ -88,14 +154,14 @@ void cmd_back(int argc) {
 int main(int argc, char**argv){
   int i=0;
   pid_t pid;
-  int arguments_cnt;
   while (1) {
-	
+	char cmd_tmp[BUFSIZ];
 	signal(SIGINT, SIG_IGN);
 	signal(SIGQUIT, SIG_IGN);
   	fputs(prompt, stdout);
 	if(strcmp(fgets(cmdline, BUFSIZ, stdin),"\n")==0)
 		continue;
+	memcpy(cmd_tmp, cmdline, sizeof(cmdline));
 	cmdline[strlen(cmdline) -1] = '\0';
 
 	arguments_cnt = makelist(cmdline, " \t", cmdvector, MAX_CMD_ARG);
@@ -107,6 +173,9 @@ int main(int argc, char**argv){
 	else if (strcmp(cmdvector[0], "exit") == 0) {
 		break;
 	}
+
+	memcpy(cmdline,cmd_tmp, sizeof(cmd_tmp));
+	cmdline[strlen(cmdline)-1] = '\0';
 
 	if(strcmp(cmdvector[arguments_cnt - 1], "&") == 0) {
 		cmdvector[arguments_cnt - 1] = '\0';
